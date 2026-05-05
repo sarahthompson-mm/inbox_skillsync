@@ -1,0 +1,32 @@
+name: Intercom → Assembled Queue Sync
+
+on:
+  schedule:
+    # Runs every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+    - cron: "0 */6 * * *"
+
+  # Allows you to trigger a manual run from the GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+  sync:
+    name: Sync queue assignments
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run sync
+        env:
+          INTERCOM_TOKEN:    ${{ secrets.INTERCOM_TOKEN }}
+          ASSEMBLED_API_KEY: ${{ secrets.ASSEMBLED_API_KEY }}
+        run: python sync.py
