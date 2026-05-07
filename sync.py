@@ -123,7 +123,7 @@ def fetch_assembled_people() -> dict[str, dict]:
     log.info("Fetching people from Assembled...")
     data = assembled_get("/people")
     people = {}
-    for person in data.get("people", []):
+    for person in data.get("people", {}).values()
         email = person.get("email", "").lower().strip()
         if email:
             people[email] = {
