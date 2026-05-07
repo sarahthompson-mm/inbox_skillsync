@@ -3,7 +3,7 @@
 Intercom ↔ Assembled Agent Audit
 ==================================
 Compares agents between Intercom and Assembled and outputs an Excel report
-showing who matched, who's missing, and fuzzy suggested fixes.
+showing who matched, who's missing, and fuzzy suggested fixes by name.
 
 Required environment variables:
   INTERCOM_TOKEN     - Intercom API Bearer token
@@ -34,27 +34,24 @@ INTERCOM_HEADERS = {
 }
 ASSEMBLED_AUTH = (ASSEMBLED_API_KEY, "")
 
-# ── Colours ───────────────────────────────────────────────────────────────────
-
 GREEN  = "C6EFCE"
 RED    = "FFC7CE"
 YELLOW = "FFEB9C"
 GREY   = "D9D9D9"
 BLUE   = "BDD7EE"
 
-# ── API helpers ───────────────────────────────────────────────────────────────
 
 def intercom_get(path):
     r = requests.get(f"{INTERCOM_BASE}{path}", headers=INTERCOM_HEADERS, timeout=30)
     r.raise_for_status()
     return r.json()
 
+
 def assembled_get(path):
     r = requests.get(f"{ASSEMBLED_BASE}{path}", auth=ASSEMBLED_AUTH, timeout=30)
     r.raise_for_status()
     return r.json()
 
-# ── Data fetching ─────────────────────────────────────────────────────────────
 
 def fetch_intercom_admins():
     print("Fetching Intercom admins...")
@@ -71,6 +68,7 @@ def fetch_intercom_admins():
     print(f"  Found {len(admins)} Intercom admins")
     return admins
 
+
 def fetch_intercom_teams():
     print("Fetching Intercom teams...")
     data = intercom_get("/teams")
@@ -79,6 +77,7 @@ def fetch_intercom_teams():
         teams[str(team["id"])] = team["name"]
     print(f"  Found {len(teams)} Intercom teams")
     return teams
+
 
 def fetch_assembled_people():
     print("Fetching Assembled people...")
@@ -91,10 +90,10 @@ def fetch_assembled_people():
                 "name":   f"{person.get('first_name','')} {person.get('last_name','')}".strip(),
                 "email":  email,
                 "queues": person.get("queues", []),
-                "role":   person.get("role", ""),
             }
     print(f"  Found {len(people)} Assembled people")
     return people
+
 
 def fetch_assembled_queues():
     print("Fetching Assembled queues...")
@@ -105,7 +104,6 @@ def fetch_assembled_queues():
     print(f"  Found {len(queues)} Assembled queues")
     return queues
 
-# ── Excel helpers ─────────────────────────────────────────────────────────────
 
 def header_row(sheet, headers, colour=GREY):
     sheet.append(headers)
@@ -114,20 +112,20 @@ def header_row(sheet, headers, colour=GREY):
         cell.fill      = PatternFill("solid", start_color=colour)
         cell.alignment = Alignment(horizontal="center")
 
+
 def colour_row(sheet, row_num, colour):
     for cell in sheet[row_num]:
         cell.fill = PatternFill("solid", start_color=colour)
+
 
 def set_column_widths(sheet, widths):
     for i, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(i)].width = width
 
-# ── Build report ──────────────────────────────────────────────────────────────
 
 def build_report(intercom_admins, intercom_teams, assembled_people, assembled_queues):
     wb = Workbook()
 
-    # Categorise agents
     bot_keywords = ["intercom.io", "facebookbot", "gmail.com", "operator+"]
 
     matched        = []
@@ -151,19 +149,18 @@ def build_report(intercom_admins, intercom_teams, assembled_people, assembled_qu
     # ── Sheet 1: Summary ──────────────────────────────────────────────────────
     ws_summary = wb.active
     ws_summary.title = "Summary"
-
     ws_summary.append(["Intercom ↔ Assembled Agent Audit"])
     ws_summary["A1"].font = Font(bold=True, size=14, name="Arial")
     ws_summary.append([])
 
     summary_data = [
-        ["Metric",                                    "Count"],
-        ["✅ Matched (in both systems)",               len(matched)],
-        ["⚠️ In Intercom only (real agents)",          len(ic_only)],
-        ["🤖 Bots / system accounts (Intercom)",       len(ic_bots)],
-        ["⚠️ In Assembled only (not in Intercom)",     len(assembled_only)],
-        ["📊 Total Intercom admins",                   len(intercom_admins)],
-        ["📊 Total Assembled people",                  len(assembled_people)],
+        ["Metric",                                 "Count"],
+        ["✅ Matched (in both systems)",            len(matched)],
+        ["⚠️ In Intercom only (real agents)",       len(ic_only)],
+        ["🤖 Bots / system accounts (Intercom)",    len(ic_bots)],
+        ["⚠️ In Assembled only (not in Intercom)",  len(assembled_only)],
+        ["📊 Total Intercom admins",                len(intercom_admins)],
+        ["📊 Total Assembled people",               len(assembled_people)],
     ]
 
     for i, row in enumerate(summary_data):
@@ -179,30 +176,32 @@ def build_report(intercom_admins, intercom_teams, assembled_people, assembled_qu
 
     set_column_widths(ws_summary, [45, 10])
 
-    # ── Sheet 2: Fuzzy suggested matches ─────────────────────────────────────
+    # ── Sheet 2: Fuzzy name matches ───────────────────────────────────────────
     ws_fuzz = wb.create_sheet("🔍 Suggested Matches")
     header_row(ws_fuzz, [
         "Intercom Name", "Intercom Email",
-        "Suggested Assembled Match", "Confidence",
-        "Intercom Teams", "Action"
+        "Suggested Assembled Match", "Suggested Email",
+        "Confidence", "Intercom Teams", "Action"
     ], BLUE)
 
-assembled_names = {person["name"]: email for email, person in assembled_people.items()}
-fuzzy_rows = []
+    # Build a name → email lookup for Assembled
+    assembled_names = {person["name"]: email for email, person in assembled_people.items()}
 
-for admin in ic_only:
-    result = fuzz_process.extractOne(admin["name"], list(assembled_names.keys()))
-    if result:
-        suggested_name = result[0]
-        score = result[1]
-        suggested_email = assembled_names[suggested_name]
+    fuzzy_rows = []
+    for admin in ic_only:
+        if not admin["name"]:
+            continue
+        result = fuzz_process.extractOne(admin["name"], list(assembled_names.keys()))
+        if result:
+            suggested_name, score = result[0], result[1]
+            suggested_email = assembled_names[suggested_name]
             team_names = ", ".join(intercom_teams.get(tid, tid) for tid in admin["team_ids"]) or "No team"
-            fuzzy_rows.append((score, admin, suggested_email, suggested_name, team_names))
+            fuzzy_rows.append((score, admin, suggested_name, suggested_email, team_names))
 
     high_conf   = 0
     medium_conf = 0
 
-    for score, admin, suggested_email, suggested_name, team_names in sorted(fuzzy_rows, key=lambda x: -x[0]):
+    for score, admin, suggested_name, suggested_email, team_names in sorted(fuzzy_rows, key=lambda x: -x[0]):
         if score >= 80:
             action     = "✅ Likely same person — update email to match"
             row_colour = GREEN
@@ -218,16 +217,17 @@ for admin in ic_only:
         ws_fuzz.append([
             admin["name"],
             admin["email"],
-            f"{suggested_name} ({suggested_email})",
+            suggested_name,
+            suggested_email,
             f"{score}%",
             team_names,
             action,
         ])
         colour_row(ws_fuzz, ws_fuzz.max_row, row_colour)
 
-    set_column_widths(ws_fuzz, [25, 35, 40, 12, 40, 38])
+    set_column_widths(ws_fuzz, [25, 35, 25, 35, 12, 40, 38])
 
-    # ── Sheet 3: In Intercom Only ─────────────────────────────────────────────
+    # ── Sheet 3: Intercom Only ────────────────────────────────────────────────
     ws_ic = wb.create_sheet("⚠️ Intercom Only")
     header_row(ws_ic, ["Name", "Intercom Email", "Intercom Teams", "Suggested Action"], YELLOW)
 
@@ -237,12 +237,12 @@ for admin in ic_only:
             admin["name"],
             admin["email"],
             team_names,
-            "See 🔍 Suggested Matches sheet for fix ideas",
+            "See 🔍 Suggested Matches sheet",
         ])
 
-    set_column_widths(ws_ic, [25, 35, 40, 38])
+    set_column_widths(ws_ic, [25, 35, 40, 30])
 
-    # ── Sheet 4: Matched agents ───────────────────────────────────────────────
+    # ── Sheet 4: Matched ──────────────────────────────────────────────────────
     ws_matched = wb.create_sheet("✅ Matched")
     header_row(ws_matched, ["Name", "Email", "Intercom Teams", "Assembled Queues"], GREEN)
 
@@ -253,7 +253,7 @@ for admin in ic_only:
 
     set_column_widths(ws_matched, [25, 35, 40, 40])
 
-    # ── Sheet 5: In Assembled Only ────────────────────────────────────────────
+    # ── Sheet 5: Assembled Only ───────────────────────────────────────────────
     ws_as = wb.create_sheet("⚠️ Assembled Only")
     header_row(ws_as, ["Name", "Assembled Email", "Assembled Queues", "Suggested Action"], YELLOW)
 
@@ -268,7 +268,6 @@ for admin in ic_only:
 
     set_column_widths(ws_as, [25, 35, 40, 35])
 
-    # Apply Arial font to all data rows
     for ws in [ws_fuzz, ws_ic, ws_matched, ws_as]:
         for row in ws.iter_rows(min_row=2):
             for cell in row:
@@ -277,7 +276,6 @@ for admin in ic_only:
 
     return wb, len(matched), len(ic_only), len(assembled_only), high_conf, medium_conf
 
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     missing = [v for v in ("INTERCOM_TOKEN", "ASSEMBLED_API_KEY") if not os.environ.get(v)]
@@ -294,7 +292,7 @@ def main():
     assembled_people = fetch_assembled_people()
     assembled_queues = fetch_assembled_queues()
 
-    print("\nBuilding report (fuzzy matching in progress, this may take a moment)...")
+    print("\nBuilding report (fuzzy matching on names, bear with...)...")
     wb, matched, ic_only, as_only, high_conf, medium_conf = build_report(
         intercom_admins, intercom_teams, assembled_people, assembled_queues
     )
@@ -310,6 +308,7 @@ def main():
     print(f"  🔍 Medium confidence:        {medium_conf} (60-79%)")
     print(f"  📁 Report saved to:          {output}")
     print(f"────────────────────────────────────────")
+
 
 if __name__ == "__main__":
     main()
