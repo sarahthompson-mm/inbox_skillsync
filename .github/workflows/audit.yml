@@ -25,7 +25,7 @@ jobs:
         env:
           INTERCOM_TOKEN:    ${{ secrets.INTERCOM_TOKEN }}
           ASSEMBLED_API_KEY: ${{ secrets.ASSEMBLED_API_KEY }}
-        run: python debug.py
+        run: python audit.py
 
       - name: Upload audit report
         uses: actions/upload-artifact@v4
