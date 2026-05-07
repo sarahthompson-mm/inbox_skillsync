@@ -187,14 +187,15 @@ def build_report(intercom_admins, intercom_teams, assembled_people, assembled_qu
         "Intercom Teams", "Action"
     ], BLUE)
 
-    assembled_emails = list(assembled_people.keys())
-    fuzzy_rows = []
+assembled_names = {person["name"]: email for email, person in assembled_people.items()}
+fuzzy_rows = []
 
-    for admin in ic_only:
-        result = fuzz_process.extractOne(admin["email"], assembled_emails)
-        if result:
-            suggested_email, score = result[0], result[1]
-            suggested_name = assembled_people[suggested_email]["name"]
+for admin in ic_only:
+    result = fuzz_process.extractOne(admin["name"], list(assembled_names.keys()))
+    if result:
+        suggested_name = result[0]
+        score = result[1]
+        suggested_email = assembled_names[suggested_name]
             team_names = ", ".join(intercom_teams.get(tid, tid) for tid in admin["team_ids"]) or "No team"
             fuzzy_rows.append((score, admin, suggested_email, suggested_name, team_names))
 
