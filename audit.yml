@@ -1,7 +1,6 @@
 name: Agent Audit Report
 
 on:
-  # Manual trigger only - run this whenever you need a fresh audit
   workflow_dispatch:
 
 jobs:
