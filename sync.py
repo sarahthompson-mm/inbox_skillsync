@@ -44,10 +44,30 @@ def intercom_get(path):
     return r.json()
 
 
-def assembled_get(path):
-    r = requests.get(f"{ASSEMBLED_BASE}{path}", auth=ASSEMBLED_AUTH, timeout=30)
+def assembled_get(path, params=None):
+    r = requests.get(f"{ASSEMBLED_BASE}{path}", auth=ASSEMBLED_AUTH, params=params, timeout=30)
     r.raise_for_status()
     return r.json()
+
+
+def assembled_get_all(path, key):
+    """Fetch all pages from a paginated Assembled endpoint."""
+    results = {}
+    offset = 0
+    limit = 100
+    while True:
+        data = assembled_get(path, params={"limit": limit, "offset": offset})
+        page = data.get(key, {})
+        if isinstance(page, dict):
+            results.update(page)
+        else:
+            for item in page:
+                results[item["id"]] = item
+        total = data.get("total", 0)
+        offset += limit
+        if offset >= total:
+            break
+    return results
 
 
 def assembled_patch(path, payload):
@@ -87,9 +107,9 @@ def fetch_intercom_admins():
 
 def fetch_assembled_queues():
     log.info("Fetching queues from Assembled...")
-    data = assembled_get("/queues")
+    all_queues = assembled_get_all("/queues", "queues")
     queues = {}
-    for queue in data.get("queues", {}).values():
+    for queue in all_queues.values():
         queues[queue["name"].lower().strip()] = queue["id"]
     log.info(f"  Found {len(queues)} Assembled queue(s)")
     return queues
@@ -97,11 +117,11 @@ def fetch_assembled_queues():
 
 def fetch_assembled_people():
     log.info("Fetching people from Assembled...")
-    data = assembled_get("/people")
+    all_people = assembled_get_all("/people", "people")
     # Keyed by Intercom platform ID for direct matching
     people = {}
     no_intercom_id = 0
-    for person in data.get("people", {}).values():
+    for person in all_people.values():
         if person.get("deleted"):
             continue
         intercom_id = person.get("platforms", {}).get("intercom", "")
