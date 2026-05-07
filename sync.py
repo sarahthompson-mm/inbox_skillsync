@@ -106,9 +106,8 @@ def fetch_intercom_admins() -> dict[str, dict]:
 def fetch_assembled_queues() -> dict[str, str]:
     log.info("Fetching queues from Assembled...")
     data = assembled_get("/queues")
-    log.info(f"  Raw Assembled queues response: {data}")
     queues = {}
-    queue_list = data if isinstance(data, list) else data.get("queues", [])
+    queue_list = data.get("queues", {}).values()
     for queue in queue_list:
         queues[queue["name"].lower().strip()] = queue["id"]
     log.info(f"  Found {len(queues)} Assembled queue(s): {list(queues.keys())}")
