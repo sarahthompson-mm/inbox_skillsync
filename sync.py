@@ -3,7 +3,8 @@
 Intercom → Assembled Queue Sync
 ================================
 Fetches team assignments from Intercom and syncs them to Assembled queues.
-Agents are matched between systems by email address.
+Agents are matched between systems using the Intercom platform ID stored
+in Assembled's platforms.intercom field.
 Teams/Queues are matched by name (case-insensitive).
 
 Required environment variables:
@@ -16,16 +17,12 @@ import sys
 import logging
 import requests
 
-# ── Logging ──────────────────────────────────────────────────────────────────
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger(__name__)
-
-# ── Config ────────────────────────────────────────────────────────────────────
 
 INTERCOM_TOKEN    = os.environ.get("INTERCOM_TOKEN")
 ASSEMBLED_API_KEY = os.environ.get("ASSEMBLED_API_KEY")
@@ -38,181 +35,140 @@ INTERCOM_HEADERS = {
     "Intercom-Version": "2.11",
     "Accept": "application/json",
 }
-
-# Assembled uses HTTP Basic Auth: API key as username, no password
 ASSEMBLED_AUTH = (ASSEMBLED_API_KEY, "")
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def intercom_get(path: str, params: dict = None) -> dict:
-    url = f"{INTERCOM_BASE}{path}"
-    resp = requests.get(url, headers=INTERCOM_HEADERS, params=params, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
+def intercom_get(path):
+    r = requests.get(f"{INTERCOM_BASE}{path}", headers=INTERCOM_HEADERS, timeout=30)
+    r.raise_for_status()
+    return r.json()
 
 
-def assembled_get(path: str, params: dict = None) -> dict:
-    url = f"{ASSEMBLED_BASE}{path}"
-    resp = requests.get(url, auth=ASSEMBLED_AUTH, params=params, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
+def assembled_get(path):
+    r = requests.get(f"{ASSEMBLED_BASE}{path}", auth=ASSEMBLED_AUTH, timeout=30)
+    r.raise_for_status()
+    return r.json()
 
 
-def assembled_patch(path: str, payload: dict) -> dict:
-    url = f"{ASSEMBLED_BASE}{path}"
-    resp = requests.patch(url, auth=ASSEMBLED_AUTH, json=payload, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
+def assembled_patch(path, payload):
+    r = requests.patch(f"{ASSEMBLED_BASE}{path}", auth=ASSEMBLED_AUTH, json=payload, timeout=30)
+    r.raise_for_status()
+    return r.json()
 
-# ── Step 1: Fetch Intercom teams ──────────────────────────────────────────────
 
-def fetch_intercom_teams() -> dict[str, dict]:
-    """
-    Returns a dict keyed by team ID:
-      { "814865": { "name": "Billing", "admin_ids": [123, 456] }, ... }
-    """
+def fetch_intercom_teams():
     log.info("Fetching teams from Intercom...")
     data = intercom_get("/teams")
     teams = {}
     for team in data.get("teams", []):
         teams[str(team["id"])] = {
-            "name": team["name"],
+            "name":      team["name"],
             "admin_ids": [str(a) for a in team.get("admin_ids", [])],
         }
-    log.info(f"  Found {len(teams)} Intercom team(s): {[t['name'] for t in teams.values()]}")
+    log.info(f"  Found {len(teams)} Intercom team(s)")
     return teams
 
-# ── Step 2: Fetch Intercom admins ─────────────────────────────────────────────
 
-def fetch_intercom_admins() -> dict[str, dict]:
-    """
-    Returns a dict keyed by admin ID:
-      { "123": { "email": "jane@example.com", "name": "Jane", "team_ids": ["814865"] }, ... }
-    """
+def fetch_intercom_admins():
     log.info("Fetching admins from Intercom...")
     data = intercom_get("/admins")
     admins = {}
     for admin in data.get("admins", []):
         admins[str(admin["id"])] = {
-            "email": admin.get("email", "").lower().strip(),
-            "name":  admin.get("name", ""),
+            "name":     admin.get("name", ""),
+            "email":    admin.get("email", "").lower().strip(),
             "team_ids": [str(t) for t in admin.get("team_ids", [])],
         }
     log.info(f"  Found {len(admins)} Intercom admin(s)")
-    log.info(f"  Sample Intercom emails: {[a['email'] for a in list(admins.values())[:25]]}")
-
     return admins
 
-# ── Step 3: Fetch Assembled queues ────────────────────────────────────────────
 
-def fetch_assembled_queues() -> dict[str, str]:
+def fetch_assembled_queues():
     log.info("Fetching queues from Assembled...")
     data = assembled_get("/queues")
     queues = {}
-    queue_list = data.get("queues", {}).values()
-    for queue in queue_list:
+    for queue in data.get("queues", {}).values():
         queues[queue["name"].lower().strip()] = queue["id"]
-    log.info(f"  Found {len(queues)} Assembled queue(s): {list(queues.keys())}")
+    log.info(f"  Found {len(queues)} Assembled queue(s)")
     return queues
 
-# ── Step 4: Fetch Assembled people ────────────────────────────────────────────
 
-def fetch_assembled_people() -> dict[str, dict]:
-    """
-    Returns a dict keyed by lowercase email:
-      { "jane@example.com": { "id": "uuid-xyz", "queues": ["uuid-abc"] }, ... }
-    """
+def fetch_assembled_people():
     log.info("Fetching people from Assembled...")
     data = assembled_get("/people")
+    # Keyed by Intercom platform ID for direct matching
     people = {}
+    no_intercom_id = 0
     for person in data.get("people", {}).values():
-        email = person.get("email", "").lower().strip()
-        if email:
-            people[email] = {
+        if person.get("deleted"):
+            continue
+        intercom_id = person.get("platforms", {}).get("intercom", "")
+        if intercom_id:
+            people[str(intercom_id)] = {
                 "id":     person["id"],
                 "name":   f"{person.get('first_name','')} {person.get('last_name','')}".strip(),
+                "email":  person.get("email", ""),
                 "queues": person.get("queues", []),
             }
-    log.info(f"  Found {len(people)} Assembled person(s)")
-    log.info(f"  Sample Assembled emails: {list(people.keys())[:25]}")
+        else:
+            no_intercom_id += 1
+    log.info(f"  Found {len(people)} Assembled people with Intercom platform ID")
+    if no_intercom_id:
+        log.warning(f"  ⚠ {no_intercom_id} Assembled people have no Intercom platform ID set")
     return people
 
-# ── Step 5: Build email → target queue UUIDs map ──────────────────────────────
 
-def build_target_queues(
-    intercom_teams: dict,
-    intercom_admins: dict,
-    assembled_queues: dict,
-) -> dict[str, list[str]]:
-    """
-    For each Intercom admin, work out which Assembled queue UUIDs they should
-    have, by matching Intercom team names → Assembled queue names.
-
-    Returns: { "jane@example.com": ["uuid-abc", "uuid-def"], ... }
-    """
-    # Map Intercom team ID → Assembled queue UUID (by matching names)
-    team_to_queue: dict[str, str] = {}
-    unmatched_teams: list[str] = []
+def build_target_queues(intercom_teams, intercom_admins, assembled_queues):
+    team_to_queue = {}
+    unmatched_teams = []
 
     for team_id, team in intercom_teams.items():
         team_name_lower = team["name"].lower().strip()
         if team_name_lower in assembled_queues:
             team_to_queue[team_id] = assembled_queues[team_name_lower]
-            log.info(f"  ✓ Matched: Intercom team '{team['name']}' → Assembled queue '{team['name']}'")
+            log.info(f"  ✓ Matched: '{team['name']}'")
         else:
             unmatched_teams.append(team["name"])
 
     if unmatched_teams:
         log.warning(
-            f"  ⚠ {len(unmatched_teams)} Intercom team(s) had no matching Assembled queue "
-            f"(names must match exactly): {unmatched_teams}"
+            f"  ⚠ {len(unmatched_teams)} Intercom team(s) had no matching Assembled queue: {unmatched_teams}"
         )
 
-    # Build per-admin target queue list
-    email_to_queues: dict[str, list[str]] = {}
-    for admin in intercom_admins.values():
-        email = admin["email"]
-        if not email:
-            continue
+    # Build per-admin target queues keyed by Intercom admin ID
+    admin_to_queues = {}
+    for admin_id, admin in intercom_admins.items():
         target = [
             team_to_queue[tid]
             for tid in admin["team_ids"]
             if tid in team_to_queue
         ]
-        email_to_queues[email] = target
+        admin_to_queues[admin_id] = target
 
-    return email_to_queues
+    return admin_to_queues
 
-# ── Step 6: Sync to Assembled ─────────────────────────────────────────────────
 
-def sync_to_assembled(
-    email_to_target_queues: dict[str, list[str]],
-    assembled_people: dict[str, dict],
-) -> None:
+def sync_to_assembled(admin_to_target_queues, assembled_people):
     updated  = 0
     skipped  = 0
     no_match = 0
 
-    for email, target_queues in email_to_target_queues.items():
-        person = assembled_people.get(email)
+    for intercom_id, target_queues in admin_to_target_queues.items():
+        person = assembled_people.get(intercom_id)
 
         if not person:
-            log.warning(f"  ⚠ No Assembled person found for Intercom admin: {email}")
             no_match += 1
             continue
 
         current_queues = sorted(person["queues"])
-        desired_queues = sorted(list(set(target_queues)))  # deduplicate
+        desired_queues = sorted(list(set(target_queues)))
 
         if current_queues == desired_queues:
-            log.info(f"  – {person['name']} ({email}): no change needed")
+            log.info(f"  – {person['name']}: no change needed")
             skipped += 1
             continue
 
-        log.info(
-            f"  ↻ Updating {person['name']} ({email}): "
-            f"{current_queues} → {desired_queues}"
-        )
+        log.info(f"  ↻ Updating {person['name']}: {current_queues} → {desired_queues}")
         assembled_patch(f"/people/{person['id']}", {"queues": desired_queues})
         updated += 1
 
@@ -223,10 +179,8 @@ def sync_to_assembled(
     log.info(f"  No match: {no_match} (Intercom admin not found in Assembled)")
     log.info("─────────────────────────────────────────────────")
 
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    # Validate env vars up front
     missing = [v for v in ("INTERCOM_TOKEN", "ASSEMBLED_API_KEY") if not os.environ.get(v)]
     if missing:
         log.error(f"Missing required environment variable(s): {', '.join(missing)}")
@@ -237,20 +191,20 @@ def main():
     log.info("═══════════════════════════════════════════════")
 
     try:
-        intercom_teams  = fetch_intercom_teams()
-        intercom_admins = fetch_intercom_admins()
+        intercom_teams   = fetch_intercom_teams()
+        intercom_admins  = fetch_intercom_admins()
         assembled_queues = fetch_assembled_queues()
         assembled_people = fetch_assembled_people()
 
         log.info("")
-        log.info("Matching teams to queues and building sync plan...")
-        email_to_target_queues = build_target_queues(
+        log.info("Matching teams to queues...")
+        admin_to_target_queues = build_target_queues(
             intercom_teams, intercom_admins, assembled_queues
         )
 
         log.info("")
         log.info("Syncing to Assembled...")
-        sync_to_assembled(email_to_target_queues, assembled_people)
+        sync_to_assembled(admin_to_target_queues, assembled_people)
 
     except requests.HTTPError as e:
         log.error(f"API error: {e.response.status_code} {e.response.text}")
