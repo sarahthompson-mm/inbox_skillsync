@@ -3,14 +3,14 @@
 Intercom ↔ Assembled Agent Audit
 ==================================
 Compares agents between Intercom and Assembled and outputs an Excel report
-showing who matched, who's missing, and who's unassigned.
+showing who matched, who's missing, and fuzzy suggested fixes.
 
 Required environment variables:
   INTERCOM_TOKEN     - Intercom API Bearer token
   ASSEMBLED_API_KEY  - Assembled API key (sk_live_...)
 
 Output:
-  agent_audit.xlsx  - Excel report with 3 sheets
+  agent_audit.xlsx  - Excel report with 5 sheets
 """
 
 import os
@@ -19,6 +19,7 @@ import requests
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
+from thefuzz import process as fuzz_process
 
 INTERCOM_TOKEN    = os.environ.get("INTERCOM_TOKEN")
 ASSEMBLED_API_KEY = os.environ.get("ASSEMBLED_API_KEY")
@@ -39,7 +40,7 @@ GREEN  = "C6EFCE"
 RED    = "FFC7CE"
 YELLOW = "FFEB9C"
 GREY   = "D9D9D9"
-WHITE  = "FFFFFF"
+BLUE   = "BDD7EE"
 
 # ── API helpers ───────────────────────────────────────────────────────────────
 
@@ -121,27 +122,18 @@ def set_column_widths(sheet, widths):
     for i, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(i)].width = width
 
-def style_cell(cell, bold=False, colour=None):
-    cell.font = Font(bold=bold, name="Arial")
-    if colour:
-        cell.fill = PatternFill("solid", start_color=colour)
-
 # ── Build report ──────────────────────────────────────────────────────────────
 
 def build_report(intercom_admins, intercom_teams, assembled_people, assembled_queues):
     wb = Workbook()
 
-    # ── Sheet 1: Summary ──────────────────────────────────────────────────────
-    ws_summary = wb.active
-    ws_summary.title = "Summary"
-
     # Categorise agents
     bot_keywords = ["intercom.io", "facebookbot", "gmail.com", "operator+"]
-    
+
     matched        = []
-    ic_only        = []  # In Intercom, not in Assembled (real agents only)
-    ic_bots        = []  # Bots/system accounts
-    assembled_only = []  # In Assembled, not in Intercom
+    ic_only        = []
+    ic_bots        = []
+    assembled_only = []
 
     for email, admin in intercom_admins.items():
         is_bot = any(k in email for k in bot_keywords) or "@" not in email
@@ -156,7 +148,10 @@ def build_report(intercom_admins, intercom_teams, assembled_people, assembled_qu
         if email not in intercom_admins:
             assembled_only.append(person)
 
-    # Write summary
+    # ── Sheet 1: Summary ──────────────────────────────────────────────────────
+    ws_summary = wb.active
+    ws_summary.title = "Summary"
+
     ws_summary.append(["Intercom ↔ Assembled Agent Audit"])
     ws_summary["A1"].font = Font(bold=True, size=14, name="Arial")
     ws_summary.append([])
@@ -184,7 +179,54 @@ def build_report(intercom_admins, intercom_teams, assembled_people, assembled_qu
 
     set_column_widths(ws_summary, [45, 10])
 
-    # ── Sheet 2: In Intercom Only (action needed) ─────────────────────────────
+    # ── Sheet 2: Fuzzy suggested matches ─────────────────────────────────────
+    ws_fuzz = wb.create_sheet("🔍 Suggested Matches")
+    header_row(ws_fuzz, [
+        "Intercom Name", "Intercom Email",
+        "Suggested Assembled Match", "Confidence",
+        "Intercom Teams", "Action"
+    ], BLUE)
+
+    assembled_emails = list(assembled_people.keys())
+    fuzzy_rows = []
+
+    for admin in ic_only:
+        result = fuzz_process.extractOne(admin["email"], assembled_emails)
+        if result:
+            suggested_email, score = result[0], result[1]
+            suggested_name = assembled_people[suggested_email]["name"]
+            team_names = ", ".join(intercom_teams.get(tid, tid) for tid in admin["team_ids"]) or "No team"
+            fuzzy_rows.append((score, admin, suggested_email, suggested_name, team_names))
+
+    high_conf   = 0
+    medium_conf = 0
+
+    for score, admin, suggested_email, suggested_name, team_names in sorted(fuzzy_rows, key=lambda x: -x[0]):
+        if score >= 80:
+            action     = "✅ Likely same person — update email to match"
+            row_colour = GREEN
+            high_conf += 1
+        elif score >= 60:
+            action      = "⚠️ Possible match — check manually"
+            row_colour  = YELLOW
+            medium_conf += 1
+        else:
+            action     = "❌ Unlikely match — probably needs adding"
+            row_colour = RED
+
+        ws_fuzz.append([
+            admin["name"],
+            admin["email"],
+            f"{suggested_name} ({suggested_email})",
+            f"{score}%",
+            team_names,
+            action,
+        ])
+        colour_row(ws_fuzz, ws_fuzz.max_row, row_colour)
+
+    set_column_widths(ws_fuzz, [25, 35, 40, 12, 40, 38])
+
+    # ── Sheet 3: In Intercom Only ─────────────────────────────────────────────
     ws_ic = wb.create_sheet("⚠️ Intercom Only")
     header_row(ws_ic, ["Name", "Intercom Email", "Intercom Teams", "Suggested Action"], YELLOW)
 
@@ -194,12 +236,12 @@ def build_report(intercom_admins, intercom_teams, assembled_people, assembled_qu
             admin["name"],
             admin["email"],
             team_names,
-            "Add to Assembled OR fix email typo",
+            "See 🔍 Suggested Matches sheet for fix ideas",
         ])
 
-    set_column_widths(ws_ic, [25, 35, 40, 35])
+    set_column_widths(ws_ic, [25, 35, 40, 38])
 
-    # ── Sheet 3: Matched agents ───────────────────────────────────────────────
+    # ── Sheet 4: Matched agents ───────────────────────────────────────────────
     ws_matched = wb.create_sheet("✅ Matched")
     header_row(ws_matched, ["Name", "Email", "Intercom Teams", "Assembled Queues"], GREEN)
 
@@ -210,7 +252,7 @@ def build_report(intercom_admins, intercom_teams, assembled_people, assembled_qu
 
     set_column_widths(ws_matched, [25, 35, 40, 40])
 
-    # ── Sheet 4: In Assembled Only ────────────────────────────────────────────
+    # ── Sheet 5: In Assembled Only ────────────────────────────────────────────
     ws_as = wb.create_sheet("⚠️ Assembled Only")
     header_row(ws_as, ["Name", "Assembled Email", "Assembled Queues", "Suggested Action"], YELLOW)
 
@@ -226,12 +268,13 @@ def build_report(intercom_admins, intercom_teams, assembled_people, assembled_qu
     set_column_widths(ws_as, [25, 35, 40, 35])
 
     # Apply Arial font to all data rows
-    for ws in [ws_ic, ws_matched, ws_as]:
+    for ws in [ws_fuzz, ws_ic, ws_matched, ws_as]:
         for row in ws.iter_rows(min_row=2):
             for cell in row:
-                cell.font = Font(name="Arial")
+                if not cell.font or not cell.font.bold:
+                    cell.font = Font(name="Arial")
 
-    return wb, len(matched), len(ic_only), len(assembled_only)
+    return wb, len(matched), len(ic_only), len(assembled_only), high_conf, medium_conf
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -250,8 +293,8 @@ def main():
     assembled_people = fetch_assembled_people()
     assembled_queues = fetch_assembled_queues()
 
-    print("\nBuilding report...")
-    wb, matched, ic_only, as_only = build_report(
+    print("\nBuilding report (fuzzy matching in progress, this may take a moment)...")
+    wb, matched, ic_only, as_only, high_conf, medium_conf = build_report(
         intercom_admins, intercom_teams, assembled_people, assembled_queues
     )
 
@@ -259,10 +302,12 @@ def main():
     wb.save(output)
 
     print(f"\n── Audit complete ──────────────────────")
-    print(f"  ✅ Matched:           {matched}")
-    print(f"  ⚠️  Intercom only:     {ic_only}")
-    print(f"  ⚠️  Assembled only:    {as_only}")
-    print(f"  📁 Report saved to:   {output}")
+    print(f"  ✅ Matched:                  {matched}")
+    print(f"  ⚠️  Intercom only:            {ic_only}")
+    print(f"  ⚠️  Assembled only:           {as_only}")
+    print(f"  🔍 High confidence matches:  {high_conf} (80%+)")
+    print(f"  🔍 Medium confidence:        {medium_conf} (60-79%)")
+    print(f"  📁 Report saved to:          {output}")
     print(f"────────────────────────────────────────")
 
 if __name__ == "__main__":
