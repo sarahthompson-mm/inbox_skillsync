@@ -19,7 +19,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests openpyxl
+        run: pip install requests openpyxl thefuzz python-Levenshtein
 
       - name: Run audit
         env:
@@ -33,3 +33,4 @@ jobs:
           name: agent-audit-report
           path: agent_audit.xlsx
           retention-days: 30
+        
