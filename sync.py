@@ -99,6 +99,8 @@ def fetch_intercom_admins() -> dict[str, dict]:
             "team_ids": [str(t) for t in admin.get("team_ids", [])],
         }
     log.info(f"  Found {len(admins)} Intercom admin(s)")
+    log.info(f"  Sample Intercom emails: {[a['email'] for a in list(admins.values())[:5]]}")
+
     return admins
 
 # ── Step 3: Fetch Assembled queues ────────────────────────────────────────────
@@ -132,6 +134,7 @@ def fetch_assembled_people() -> dict[str, dict]:
                 "queues": person.get("queues", []),
             }
     log.info(f"  Found {len(people)} Assembled person(s)")
+    log.info(f"  Sample Assembled emails: {list(people.keys())[:5]}")
     return people
 
 # ── Step 5: Build email → target queue UUIDs map ──────────────────────────────
