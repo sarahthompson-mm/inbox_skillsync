@@ -104,12 +104,9 @@ def fetch_intercom_admins() -> dict[str, dict]:
 # ── Step 3: Fetch Assembled queues ────────────────────────────────────────────
 
 def fetch_assembled_queues() -> dict[str, str]:
-    """
-    Returns a dict keyed by lowercase queue name → Assembled queue UUID:
-      { "billing": "uuid-abc-123", ... }
-    """
     log.info("Fetching queues from Assembled...")
     data = assembled_get("/queues")
+    log.info(f"  Raw Assembled queues response: {data}")
     queues = {}
     queue_list = data if isinstance(data, list) else data.get("queues", [])
     for queue in queue_list:
