@@ -80,6 +80,8 @@ def fetch_intercom_admins():
             "team_ids": [str(t) for t in admin.get("team_ids", [])],
         }
     log.info(f"  Found {len(admins)} Intercom admin(s)")
+    for aid, a in list(admins.items())[:3]:
+        log.info(f"  Sample Intercom admin ID: '{aid}' -> {a['name']}")
     return admins
 
 
@@ -113,6 +115,8 @@ def fetch_assembled_people():
         else:
             no_intercom_id += 1
     log.info(f"  Found {len(people)} Assembled people with Intercom platform ID")
+    for iid, p in list(people.items())[:3]:
+        log.info(f"  Sample Assembled Intercom ID: '{iid}' -> {p['name']}")
     if no_intercom_id:
         log.warning(f"  ⚠ {no_intercom_id} Assembled people have no Intercom platform ID set")
     return people
