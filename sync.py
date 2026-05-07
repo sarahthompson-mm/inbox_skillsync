@@ -107,7 +107,7 @@ def fetch_assembled_queues() -> dict[str, str]:
     log.info("Fetching queues from Assembled...")
     data = assembled_get("/queues")
     queues = {}
-    queue_list = data.get("queues", {}).values()
+    queue_list = data.get("queues", {}).values():
     for queue in queue_list:
         queues[queue["name"].lower().strip()] = queue["id"]
     log.info(f"  Found {len(queues)} Assembled queue(s): {list(queues.keys())}")
