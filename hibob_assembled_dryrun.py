@@ -163,7 +163,6 @@ def build_report(employees, assembled_people, team_name_to_id, team_id_to_name):
             no_match.append({
                 "name":         emp_name,
                 "email":        emp.get("email", ""),
-                "assembled_id": assembled_id or "—",
                 "job_title":    emp.get("job_title", ""),
                 "team":         raw_team,
                 "level":        emp.get("level", ""),
