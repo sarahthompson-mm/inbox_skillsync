@@ -117,14 +117,16 @@ def fetch_assembled_people():
     for person in all_people.values():
         if person.get("deleted"):
             continue
-        people[str(person["id"])] = {
-            "id":     person["id"],
-            "name":   f"{person.get('first_name','')} {person.get('last_name','')}".strip(),
-            "email":  person.get("email", ""),
-            "teams":  person.get("teams", []),
-            "queues": person.get("queues", []),
-        }
-    print(f"  Found {len(people)} active Assembled people")
+        email = person.get("email", "").lower().strip()
+        if email:
+            people[email] = {
+                "id":     person["id"],
+                "name":   f"{person.get('first_name','')} {person.get('last_name','')}".strip(),
+                "email":  email,
+                "teams":  person.get("teams", []),
+                "queues": person.get("queues", []),
+            }
+    print(f"  Found {len(people)} active Assembled people with email")
     return people
 
 
@@ -148,14 +150,14 @@ def build_report(employees, assembled_people, team_name_to_id, team_id_to_name):
     for emp in employees:
         emp_name      = f"{emp.get('first_name','')} {emp.get('last_name','')}".strip()
         raw_team      = (emp.get("team") or "").strip()
-        assembled_id  = str(emp.get("assembled_id", "")).strip()
-
+            email     = emp.get("email", "").lower().strip()
+      
         target_team_lower = TEAM_NAME_OVERRIDES.get(raw_team.lower(), raw_team.lower())
         target_team_id    = team_name_to_id.get(target_team_lower)
         overridden        = raw_team.lower() in TEAM_NAME_OVERRIDES
         team_display      = f"{raw_team} → {target_team_lower.title()}" if overridden else raw_team
 
-        person = assembled_people.get(assembled_id) if assembled_id else None
+        person = assembled_people.get(email)
 
         if not person:
             no_match.append({
