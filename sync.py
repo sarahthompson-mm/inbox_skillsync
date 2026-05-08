@@ -37,6 +37,13 @@ INTERCOM_HEADERS = {
 }
 ASSEMBLED_AUTH = (ASSEMBLED_API_KEY, "")
 
+# ── Manual name overrides ─────────────────────────────────────────────────────
+# For cases where Intercom team names and Assembled queue names will never match
+# Format: "intercom team name (lowercase)" → "assembled queue name (lowercase)"
+MANUAL_NAME_OVERRIDES = {
+    "aircall fnol": "first party claims - fnol - calls",
+}
+
 
 def intercom_get(path):
     r = requests.get(f"{INTERCOM_BASE}{path}", headers=INTERCOM_HEADERS, timeout=30)
@@ -148,9 +155,14 @@ def build_target_queues(intercom_teams, intercom_admins, assembled_queues):
 
     for team_id, team in intercom_teams.items():
         team_name_lower = team["name"].lower().strip()
-        if team_name_lower in assembled_queues:
-            team_to_queue[team_id] = assembled_queues[team_name_lower]
-            log.info(f"  ✓ Matched: '{team['name']}'")
+        # Check manual overrides first, then fall back to name matching
+        resolved_name = MANUAL_NAME_OVERRIDES.get(team_name_lower, team_name_lower)
+        if resolved_name in assembled_queues:
+            team_to_queue[team_id] = assembled_queues[resolved_name]
+            if team_name_lower != resolved_name:
+                log.info(f"  ✓ Matched (override): '{team['name']}' → '{resolved_name}'")
+            else:
+                log.info(f"  ✓ Matched: '{team['name']}'")
         else:
             unmatched_teams.append(team["name"])
 
