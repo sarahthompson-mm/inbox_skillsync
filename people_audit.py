@@ -190,7 +190,7 @@ def build_report(people, role_lookup, team_lookup, queue_lookup, site_lookup):
     # ── Role summary ──────────────────────────────────────────────────────────
     ws.append([])
     ws.append(["Role breakdown"])
-    ws[ws.max_row]["A"].font = Font(bold=True, name="Arial")
+    ws.cell(row=ws.max_row, column=1).font = Font(bold=True, name="Arial")
     ws.append(["Role name", "Count"])
     for cell in ws[ws.max_row]:
         cell.font = Font(bold=True, name="Arial")
