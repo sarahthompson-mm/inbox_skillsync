@@ -1,17 +1,3 @@
-#!/usr/bin/env python3
-"""
-Intercom → Assembled Queue Sync
-================================
-Fetches team assignments from Intercom and syncs them to Assembled queues.
-Agents are matched between systems using the Intercom platform ID stored
-in Assembled's platforms.intercom field.
-Teams/Queues are matched by name (case-insensitive).
-
-Required environment variables:
-  INTERCOM_TOKEN     - Intercom API Bearer token
-  ASSEMBLED_API_KEY  - Assembled API key (sk_live_...)
-"""
-
 import os
 import sys
 import logging
@@ -37,12 +23,16 @@ INTERCOM_HEADERS = {
 }
 ASSEMBLED_AUTH = (ASSEMBLED_API_KEY, "")
 
-# ── Manual name overrides ─────────────────────────────────────────────────────
-# For cases where Intercom team names and Assembled queue names will never match
-# Format: "intercom team name (lowercase)" → "assembled queue name (lowercase)"
+# Intercom team name -> Assembled queue name (lowercase, for names that will never match)
 MANUAL_NAME_OVERRIDES = {
     "aircall fnol": "first party claims - fnol - calls",
 }
+
+# These queue names will never be removed by the sync, even if Intercom
+# has no matching team. The agent keeps them alongside whatever Intercom says.
+PROTECTED_QUEUE_NAMES = [
+    "first party claims - fnol - calls",
+]
 
 
 def intercom_get(path):
@@ -58,7 +48,6 @@ def assembled_get(path, params=None):
 
 
 def assembled_get_all(path, key):
-    """Fetch all pages from a paginated Assembled endpoint."""
     results = {}
     offset = 0
     limit = 100
@@ -89,7 +78,7 @@ def fetch_intercom_teams():
     teams = {}
     for team in data.get("teams", []):
         teams[str(team["id"])] = {
-            "name":      team["name"],
+            "name": team["name"],
             "admin_ids": [str(a) for a in team.get("admin_ids", [])],
         }
     log.info(f"  Found {len(teams)} Intercom team(s)")
@@ -107,25 +96,24 @@ def fetch_intercom_admins():
             "team_ids": [str(t) for t in admin.get("team_ids", [])],
         }
     log.info(f"  Found {len(admins)} Intercom admin(s)")
-    for aid, a in list(admins.items())[:3]:
-        log.info(f"  Sample Intercom admin ID: '{aid}' -> {a['name']}")
     return admins
 
 
 def fetch_assembled_queues():
     log.info("Fetching queues from Assembled...")
     all_queues = assembled_get_all("/queues", "queues")
-    queues = {}
+    name_to_id = {}
+    id_to_name = {}
     for queue in all_queues.values():
-        queues[queue["name"].lower().strip()] = queue["id"]
-    log.info(f"  Found {len(queues)} Assembled queue(s)")
-    return queues
+        name_to_id[queue["name"].lower().strip()] = queue["id"]
+        id_to_name[queue["id"]] = queue["name"].lower().strip()
+    log.info(f"  Found {len(name_to_id)} Assembled queue(s)")
+    return name_to_id, id_to_name
 
 
 def fetch_assembled_people():
-    log.info("Fetching people from Assembled...")
+    log.info("Fetching people from Assembled (all pages)...")
     all_people = assembled_get_all("/people", "people")
-    # Keyed by Intercom platform ID for direct matching
     people = {}
     no_intercom_id = 0
     for person in all_people.values():
@@ -142,36 +130,30 @@ def fetch_assembled_people():
         else:
             no_intercom_id += 1
     log.info(f"  Found {len(people)} Assembled people with Intercom platform ID")
-    for iid, p in list(people.items())[:3]:
-        log.info(f"  Sample Assembled Intercom ID: '{iid}' -> {p['name']}")
     if no_intercom_id:
-        log.warning(f"  ⚠ {no_intercom_id} Assembled people have no Intercom platform ID set")
+        log.warning(f"  {no_intercom_id} Assembled people have no Intercom platform ID set")
     return people
 
 
-def build_target_queues(intercom_teams, intercom_admins, assembled_queues):
+def build_target_queues(intercom_teams, intercom_admins, queue_name_to_id):
     team_to_queue = {}
     unmatched_teams = []
 
     for team_id, team in intercom_teams.items():
         team_name_lower = team["name"].lower().strip()
-        # Check manual overrides first, then fall back to name matching
         resolved_name = MANUAL_NAME_OVERRIDES.get(team_name_lower, team_name_lower)
-        if resolved_name in assembled_queues:
-            team_to_queue[team_id] = assembled_queues[resolved_name]
+        if resolved_name in queue_name_to_id:
+            team_to_queue[team_id] = queue_name_to_id[resolved_name]
             if team_name_lower != resolved_name:
-                log.info(f"  ✓ Matched (override): '{team['name']}' → '{resolved_name}'")
+                log.info(f"  Matched (override): '{team['name']}' -> '{resolved_name}'")
             else:
-                log.info(f"  ✓ Matched: '{team['name']}'")
+                log.info(f"  Matched: '{team['name']}'")
         else:
             unmatched_teams.append(team["name"])
 
     if unmatched_teams:
-        log.warning(
-            f"  ⚠ {len(unmatched_teams)} Intercom team(s) had no matching Assembled queue: {unmatched_teams}"
-        )
+        log.warning(f"  {len(unmatched_teams)} Intercom team(s) had no matching Assembled queue: {unmatched_teams}")
 
-    # Build per-admin target queues keyed by Intercom admin ID
     admin_to_queues = {}
     for admin_id, admin in intercom_admins.items():
         target = [
@@ -184,7 +166,16 @@ def build_target_queues(intercom_teams, intercom_admins, assembled_queues):
     return admin_to_queues
 
 
-def sync_to_assembled(admin_to_target_queues, assembled_people):
+def sync_to_assembled(admin_to_target_queues, assembled_people, queue_id_to_name):
+    # Build a set of protected queue IDs
+    protected_queue_ids = set(
+        qid for qid, name in queue_id_to_name.items()
+        if name in PROTECTED_QUEUE_NAMES
+    )
+
+    if protected_queue_ids:
+        log.info(f"  Protected queues: {[queue_id_to_name[q] for q in protected_queue_ids]}")
+
     updated  = 0
     skipped  = 0
     no_match = 0
@@ -196,24 +187,26 @@ def sync_to_assembled(admin_to_target_queues, assembled_people):
             no_match += 1
             continue
 
+        # Preserve any protected queues the agent currently has
+        protected_ids = [qid for qid in person["queues"] if qid in protected_queue_ids]
+        desired_queues = sorted(list(set(target_queues + protected_ids)))
         current_queues = sorted(person["queues"])
-        desired_queues = sorted(list(set(target_queues)))
 
         if current_queues == desired_queues:
-            log.info(f"  – {person['name']}: no change needed")
+            log.info(f"  - {person['name']}: no change needed")
             skipped += 1
             continue
 
-        log.info(f"  ↻ Updating {person['name']}: {current_queues} → {desired_queues}")
+        log.info(f"  Updating {person['name']}: {current_queues} -> {desired_queues}")
         assembled_patch(f"/people/{person['id']}", {"queues": desired_queues})
         updated += 1
 
     log.info("")
-    log.info("── Sync complete ────────────────────────────────")
+    log.info("-- Sync complete ------------------------------------------------")
     log.info(f"  Updated : {updated}")
     log.info(f"  Skipped : {skipped} (already correct)")
     log.info(f"  No match: {no_match} (Intercom admin not found in Assembled)")
-    log.info("─────────────────────────────────────────────────")
+    log.info("-----------------------------------------------------------------")
 
 
 def main():
@@ -222,25 +215,25 @@ def main():
         log.error(f"Missing required environment variable(s): {', '.join(missing)}")
         sys.exit(1)
 
-    log.info("═══════════════════════════════════════════════")
-    log.info("  Intercom → Assembled Queue Sync")
-    log.info("═══════════════════════════════════════════════")
+    log.info("=================================================================")
+    log.info("  Intercom -> Assembled Queue Sync")
+    log.info("=================================================================")
 
     try:
         intercom_teams   = fetch_intercom_teams()
         intercom_admins  = fetch_intercom_admins()
-        assembled_queues = fetch_assembled_queues()
+        queue_name_to_id, queue_id_to_name = fetch_assembled_queues()
         assembled_people = fetch_assembled_people()
 
         log.info("")
         log.info("Matching teams to queues...")
         admin_to_target_queues = build_target_queues(
-            intercom_teams, intercom_admins, assembled_queues
+            intercom_teams, intercom_admins, queue_name_to_id
         )
 
         log.info("")
         log.info("Syncing to Assembled...")
-        sync_to_assembled(admin_to_target_queues, assembled_people)
+        sync_to_assembled(admin_to_target_queues, assembled_people, queue_id_to_name)
 
     except requests.HTTPError as e:
         log.error(f"API error: {e.response.status_code} {e.response.text}")
