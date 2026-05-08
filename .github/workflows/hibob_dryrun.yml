@@ -1,0 +1,33 @@
+name: HiBob → Assembled Dry Run
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dryrun:
+    name: Match HiBob to Assembled (read only)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests openpyxl
+
+      - name: Run dry run
+        env:
+          ASSEMBLED_API_KEY: ${{ secrets.ASSEMBLED_API_KEY }}
+        run: python hibob_assembled_dryrun.py
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: hibob-dryrun-report
+          path: hibob_dryrun.xlsx
+          retention-days: 30
