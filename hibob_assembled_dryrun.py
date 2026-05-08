@@ -156,7 +156,9 @@ def build_report(employees, assembled_people, team_name_to_id, team_id_to_name):
         team_display      = f"{raw_team} → {target_team_lower.title()}" if overridden else raw_team
 
         person = assembled_people.get(assembled_id) if assembled_id else None
-
+        if not person and assembled_id:
+            print(f"  DEBUG: '{assembled_id}' not found in assembled_people (sample keys: {list(assembled_people.keys())[:3]})")
+        
         if not person:
             no_match.append({
                 "name":         emp_name,
