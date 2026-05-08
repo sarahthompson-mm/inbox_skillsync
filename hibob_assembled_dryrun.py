@@ -150,7 +150,7 @@ def build_report(employees, assembled_people, team_name_to_id, team_id_to_name):
     for emp in employees:
         emp_name      = f"{emp.get('first_name','')} {emp.get('last_name','')}".strip()
         raw_team      = (emp.get("team") or "").strip()
-            email     = emp.get("email", "").lower().strip()
+        email     = emp.get("email", "").lower().strip()
       
         target_team_lower = TEAM_NAME_OVERRIDES.get(raw_team.lower(), raw_team.lower())
         target_team_id    = team_name_to_id.get(target_team_lower)
