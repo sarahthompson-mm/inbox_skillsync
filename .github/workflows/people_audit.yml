@@ -23,7 +23,7 @@ jobs:
       - name: Run people audit
         env:
           ASSEMBLED_API_KEY: ${{ secrets.ASSEMBLED_API_KEY }}
-        run: python people_audit.py
+        run: python staffable_check.py
 
       - name: Upload report
         uses: actions/upload-artifact@v4
