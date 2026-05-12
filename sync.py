@@ -32,6 +32,7 @@ MANUAL_NAME_OVERRIDES = {
 # has no matching team. The agent keeps them alongside whatever Intercom says.
 PROTECTED_QUEUE_NAMES = [
     "first party claims - fnol - calls",
+    "customer care",
 ]
 
 
