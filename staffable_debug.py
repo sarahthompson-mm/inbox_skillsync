@@ -19,5 +19,5 @@ while True:
 
 for person in results.values():
     name = f"{person.get('first_name','')} {person.get('last_name','')}".strip()
-    if name in ["Anna Joyner", "Akos Nagy"]:
-        print(f"{name}: staffable={person.get('staffable')} agent_role={person.get('agent_role')}")
+    if name in ["Anna Joyner", "Akos Nagy", "Lauren Gatt", "Kristof Snee"]:
+    print(f"{name}: staffable={person.get('staffable')} agent_role={person.get('agent_role')} roles={person.get('roles')}")
