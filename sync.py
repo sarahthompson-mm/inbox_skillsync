@@ -33,6 +33,7 @@ MANUAL_NAME_OVERRIDES = {
 PROTECTED_QUEUE_NAMES = [
     "first party claims - fnol - calls",
     "customer care",
+    "Customer Care Aircall",
 ]
 
 
